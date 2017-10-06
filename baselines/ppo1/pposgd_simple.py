@@ -183,7 +183,7 @@ def learn(env, policy_func, *,
         elif max_seconds and time.time() - tstart >= max_seconds:
             break
         
-        # Learning rate
+        # Learning rate decay
         if schedule == 'constant':
             cur_lrmult = 1.0
         elif schedule == 'linear':
@@ -196,7 +196,7 @@ def learn(env, policy_func, *,
         # Sample rollouts
         seg = segment_generator.__next__()
         
-        # ?? Compute vtarg and atarg
+        # ?? Compute vtarg and atarg -- not sure what they are
         new, vpred, rew = seg['new'], seg['vpred'], seg['rew']
         new = np.append(new, 0) # last element is only used for last vtarg, but we already zeroed it if last new = 1
         vpred = np.append(vpred, seg["nextvpred"])
@@ -210,20 +210,19 @@ def learn(env, policy_func, *,
         vpred = vpred[:-1]
         atarg = atarg[:-1]
         
+        # make dataset
         dataset = Dataset({
-                "ob" : seg['ob'],
-                "ac" : seg['ac'],
-                "vtarg" : atarg + vpred,
-                "atarg" : (atarg - atarg.mean()) / atarg.std(),
-            }, 
-            shuffle=not pi.recurrent
-        )
+            "ob" : seg['ob'],
+            "ac" : seg['ac'],
+            "vtarg" : atarg + vpred,
+            "atarg" : (atarg - atarg.mean()) / atarg.std(),
+        }, shuffle=not pi.recurrent)
         
         # update running mean/std for policy, if applicable
         if hasattr(pi, "ob_rms"):
             pi.ob_rms.update(seg['ob'])
         
-         # oldpi = pi
+         # set oldpi = pi
         update_oldpi()
         
         # Optimize
@@ -232,19 +231,20 @@ def learn(env, policy_func, *,
                 g = compute_grad(batch["ob"], batch["ac"], batch["atarg"], batch["vtarg"], cur_lrmult)
                 opt.update(g, optim_stepsize * cur_lrmult) 
         
-        # Keep track of number of episodes, steps, etc
+        
+        # Tracking steps + logging
         lrlocal = (seg["ep_lens"], seg["ep_rets"]) # local values
         listoflrpairs = MPI.COMM_WORLD.allgather(lrlocal) # list of tuples
         lens, rews = map(flatten_lists, zip(*listoflrpairs))
+        episodes_so_far += len(lens)
+        timesteps_so_far += sum(lens)
+        iters_so_far += 1
+        
         lenbuffer.extend(lens)
         rewbuffer.extend(rews)
         logger.record_tabular("EpLenMean", np.mean(lenbuffer))
         logger.record_tabular("EpRewMean", np.mean(rewbuffer))
         logger.record_tabular("EpThisIter", len(lens))
-        
-        episodes_so_far += len(lens)
-        timesteps_so_far += sum(lens)
-        iters_so_far += 1
         logger.record_tabular("EpisodesSoFar", episodes_so_far)
         logger.record_tabular("TimestepsSoFar", timesteps_so_far)
         logger.record_tabular("TimeElapsed", time.time() - tstart)
