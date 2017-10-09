@@ -47,20 +47,20 @@ class DiagGaussianPd(object):
         self.mean = mean
         self.logstd = logstd
         self.std = tf.exp(logstd)
-        
-    @classmethod
-    def fromflat(cls, flat):
-        return cls(flat)
     
-    def flatparam(self):
-        return self.flat
+    # @classmethod
+    # def fromflat(cls, flat):
+    #     return cls(flat)
+    
+    # def flatparam(self):
+    #     return self.flat
     
     def mode(self):
         return self.mean
     
-    def kl(self, other):
-        assert isinstance(other, DiagGaussianPd)
-        return U.sum(other.logstd - self.logstd + (tf.square(self.std) + tf.square(self.mean - other.mean)) / (2.0 * tf.square(other.std)) - 0.5, axis=-1)
+    # def kl(self, other):
+    #     assert isinstance(other, DiagGaussianPd)
+    #     return U.sum(other.logstd - self.logstd + (tf.square(self.std) + tf.square(self.mean - other.mean)) / (2.0 * tf.square(other.std)) - 0.5, axis=-1)
     
     def entropy(self):
         return U.sum(self.logstd + .5 * np.log(2.0 * np.pi * np.e), axis=-1)
@@ -83,9 +83,10 @@ class MlpPolicy(object):
         with tf.variable_scope(name):
             self._init(*args, **kwargs)
             self.scope = tf.get_variable_scope().name
-
+            
     def _init(self, ob_space, ac_space, hid_size, num_hid_layers, gaussian_fixed_var=True):
         assert isinstance(ob_space, gym.spaces.Box)
+        assert isinstance(ac_space, gym.spaces.Box)
         
         # Action space probability distribution
         self.pdtype = pdtype = DiagGaussianPdType(ac_space.shape[0])
@@ -134,7 +135,7 @@ class MlpPolicy(object):
         
         # Run
         self._act = U.function([stochastic, ob], [ac, self.vpred])
-
+        
     def act(self, stochastic, ob):
         ac1, vpred1 =  self._act(stochastic, ob[None])
         return ac1[0], vpred1[0]

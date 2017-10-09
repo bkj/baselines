@@ -11,7 +11,7 @@ import argparse
 
 from baselines import bench, logger
 from baselines.common import set_global_seeds, tf_util as U
-from baselines.ppo1 import mlp_policy, pposgd_simple
+import mlp_policy, pposgd_simple
 
 def parse_args():
     parser = argparse.ArgumentParser()

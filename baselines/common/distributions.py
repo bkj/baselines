@@ -62,14 +62,19 @@ class MultiCategoricalPdType(PdType):
         self.low = low
         self.high = high
         self.ncats = high - low + 1
+    
     def pdclass(self):
         return MultiCategoricalPd
+    
     def pdfromflat(self, flat):
         return MultiCategoricalPd(self.low, self.high, flat)
+    
     def param_shape(self):
         return [sum(self.ncats)]
+    
     def sample_shape(self):
         return [len(self.ncats)]
+    
     def sample_dtype(self):
         return tf.int32
 
@@ -169,20 +174,25 @@ class MultiCategoricalPd(Pd):
         self.flat = flat
         self.low = tf.constant(low, dtype=tf.int32)
         self.categoricals = list(map(CategoricalPd, tf.split(flat, high - low + 1, axis=len(flat.get_shape()) - 1)))
+    
     def flatparam(self):
         return self.flat
+    
     def mode(self):
         return self.low + tf.cast(tf.stack([p.mode() for p in self.categoricals], axis=-1), tf.int32)
+    
     def neglogp(self, x):
         return tf.add_n([p.neglogp(px) for p, px in zip(self.categoricals, tf.unstack(x - self.low, axis=len(x.get_shape()) - 1))])
+    
     def kl(self, other):
-        return tf.add_n([
-                p.kl(q) for p, q in zip(self.categoricals, other.categoricals)
-            ])
+        return tf.add_n([p.kl(q) for p, q in zip(self.categoricals, other.categoricals)])
+    
     def entropy(self):
         return tf.add_n([p.entropy() for p in self.categoricals])
+    
     def sample(self):
         return self.low + tf.cast(tf.stack([p.sample() for p in self.categoricals], axis=-1), tf.int32)
+    
     @classmethod
     def fromflat(cls, flat):
         raise NotImplementedError

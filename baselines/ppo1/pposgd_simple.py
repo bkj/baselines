@@ -58,7 +58,7 @@ def make_segment_generator(pi, env, horizon, stochastic):
                 "new" : news,
                 "ac" : acs,
                 "prevac" : prevacs,
-                "nextvpred": vpred * (1 - new),
+                "nextvpred" : vpred * (1 - new),
                 "ep_rets" : ep_rets,
                 "ep_lens" : ep_lens,
             }
@@ -230,7 +230,6 @@ def learn(env, policy_func, *,
             for batch in dataset.iterate_once(optim_batchsize or seg['ob'].shape[0]):
                 g = compute_grad(batch["ob"], batch["ac"], batch["atarg"], batch["vtarg"], cur_lrmult)
                 opt.update(g, optim_stepsize * cur_lrmult) 
-        
         
         # Tracking steps + logging
         lrlocal = (seg["ep_lens"], seg["ep_rets"]) # local values
