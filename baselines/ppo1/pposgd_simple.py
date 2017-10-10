@@ -12,7 +12,6 @@ from collections import deque
 from baselines import logger
 import baselines.common.tf_util as U
 from baselines.common import Dataset, zipsame
-
 from baselines.common.mpi_adam import MpiAdam
 
 # --
