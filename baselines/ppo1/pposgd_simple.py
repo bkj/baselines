@@ -12,7 +12,10 @@ from collections import deque
 from baselines import logger
 import baselines.common.tf_util as U
 from baselines.common import Dataset, zipsame
+
 from baselines.common.mpi_adam import MpiAdam
+
+import torch
 
 # --
 # Helpers
@@ -25,9 +28,9 @@ def flatten_lists(listoflists):
 
 def make_segment_generator(pi, env, horizon, stochastic, gamma, lam):
     t = 0
-    ac = env.action_space.sample() # not used, just so we have the datatype
+    ac = torch.from_numpy(env.action_space.sample()) # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
-    ob = env.reset()
+    ob = torch.from_numpy(env.reset())
     
     cur_ep_ret = 0 # return in current episode
     cur_ep_len = 0 # len of current episode
@@ -35,55 +38,57 @@ def make_segment_generator(pi, env, horizon, stochastic, gamma, lam):
     ep_lens = [] # lengths of ...
     
     # Initialize history arrays
-    obs     = np.array([ob for _ in range(horizon)])
-    rews    = np.zeros(horizon, 'float32')
-    vpreds  = np.zeros(horizon, 'float32')
-    news    = np.zeros(horizon, 'int32')
-    acs     = np.array([ac for _ in range(horizon)])
+    obs     = torch.zeros((horizon, ob.size(0)))
+    rews    = torch.zeros(horizon)
+    vpreds  = torch.zeros(horizon)
+    news    = torch.zeros(horizon).long()
+    acs     = torch.zeros((horizon, ac.size(0)))
     
     while True:
-        ac, vpred = pi.act(stochastic, ob)
+        ac, vpred = pi.act(stochastic, ob.numpy())
+        ac = torch.from_numpy(ac)
+        
         # Slight weirdness here because we need value function at time T
         # before returning segment [0, T-1] so we get the correct
         # terminal value
         if t > 0 and t % horizon == 0:
             
+            # Compute targets
             nextvpred = vpred * (1 - new)
-            
-            news   = np.append(news, 0) # last element is only used for last vtarg, but we already zeroed it if last new = 1
-            vpreds = np.append(vpreds, nextvpred)
-            atargs = np.zeros(len(rews) + 1, 'float32')
+            news_     = torch.cat([news, torch.LongTensor([0])]) # last element is only used for last vtarg, but we already zeroed it if last new = 1
+            vpreds_   = torch.cat([vpreds, torch.FloatTensor([nextvpred])])
+            atargs    = torch.zeros(len(rews) + 1)
             
             for t in reversed(range(len(rews))):
-                nonterminal = 1 - news[t+1]
-                delta = rews[t] + gamma * vpreds[t+1] * nonterminal - vpreds[t]
+                nonterminal = 1 - news_[t+1]
+                delta = rews[t] + gamma * vpreds_[t+1] * nonterminal - vpreds_[t]
                 atargs[t] = delta + gamma * lam * nonterminal * atargs[t+1]
             
-            vpreds = vpreds[:-1]
             atargs = atargs[:-1]
             
-            yield {
-                "obs"        : obs,
-                "acs"        : acs,
-                "vtargs"     : atargs + vpred,
-                "atargs"     : (atargs - atargs.mean()) / atargs.std(),
-                
-                "ep_rets"    : ep_rets,
-                "ep_lens"    : ep_lens,
-            }
+            yield ({
+                "obs"        : obs.numpy(),
+                "acs"        : acs.numpy(),
+                "atargs"     : ((atargs - atargs.mean()) / atargs.std()).numpy(),
+                "vtargs"     : (atargs + vpreds).numpy(),
+            }, {
+                "ep_lens" : ep_lens,
+                "ep_rets" : ep_rets,
+            })
             
             # Be careful!!! if you change the downstream algorithm to aggregate
             # several of these batches, then be sure to do a deepcopy
             ep_rets = []
             ep_lens = []
         
-        i          = t % horizon
-        obs[i]     = ob
-        vpreds[i]  = vpred
-        news[i]    = new
-        acs[i]     = ac
+        i = t % horizon
+        obs[i]    = ob
+        vpreds[i] = float(vpred)
+        news[i]   = new
+        acs[i]    = ac
         
-        ob, rew, new, _ = env.step(ac)
+        ob, rew, new, _ = env.step(ac.numpy())
+        ob = torch.from_numpy(ob)
         rews[i] = rew
         
         cur_ep_ret += rew
@@ -93,7 +98,7 @@ def make_segment_generator(pi, env, horizon, stochastic, gamma, lam):
             ep_lens.append(cur_ep_len)
             cur_ep_ret = 0
             cur_ep_len = 0
-            ob = env.reset()
+            ob = torch.from_numpy(env.reset())
         
         t += 1
 
@@ -179,6 +184,8 @@ def learn(env, policy_func, *,
     # Run
     
     while True:
+        logger.log("\n\n-- Iteration %i --"%iters_so_far)
+        
         if callback:
             callback(locals(), globals())
         
@@ -200,10 +207,11 @@ def learn(env, policy_func, *,
         else:
             raise NotImplementedError
         
-        logger.log("\n\n-- Iteration %i --"%iters_so_far)
-        
         # Sample rollouts
-        seg = segment_generator.__next__()
+        seg, meta = segment_generator.__next__()
+        
+        # make dataset
+        dataset = Dataset(seg, shuffle=not pi.recurrent)
         
         # update running mean/std for policy, if applicable
         if hasattr(pi, "ob_rms"):
@@ -213,32 +221,22 @@ def learn(env, policy_func, *,
         update_oldpi()
         
         # Optimize
-        dataset = Dataset({
-            "obs"    : seg['obs'],
-            "acs"    : seg['acs'],
-            "vtargs" : seg['vtargs'],
-            "atargs" : seg['atargs'],
-        }, shuffle=not pi.recurrent)
-        
         for _ in range(optim_epochs):
-            for batch in dataset.iterate_once(optim_batchsize or seg['ob'].shape[0]):
+            for batch in dataset.iterate_once(optim_batchsize or seg['obs'].shape[0]):
                 g = compute_grad(batch["obs"], batch["acs"], batch["atargs"], batch["vtargs"], cur_lrmult)
                 opt.update(g, optim_stepsize * cur_lrmult) 
         
         # Tracking steps + logging
-        ep_lens = seg["ep_lens"]
-        ep_rets = seg["ep_rets"]
-        
-        episodes_so_far += len(ep_lens)
-        timesteps_so_far += sum(ep_lens)
+        episodes_so_far += len(meta['ep_lens'])
+        timesteps_so_far += sum(meta['ep_lens'])
         iters_so_far += 1
         
-        lenbuffer.extend(ep_lens)
-        rewbuffer.extend(ep_rets)
-        logger.record_tabular("EpLenMean", np.mean(lenbuffer))
-        logger.record_tabular("EpRewMean", np.mean(rewbuffer))
-        logger.record_tabular("EpThisIter", len(ep_lens))
-        logger.record_tabular("EpisodesSoFar", episodes_so_far)
-        logger.record_tabular("TimestepsSoFar", timesteps_so_far)
-        logger.record_tabular("TimeElapsed", time.time() - tstart)
-        logger.dump_tabular()
+        lenbuffer.extend(meta['ep_lens'])
+        rewbuffer.extend(meta['ep_rets'])
+        print("EpLenMean = %f" % np.mean(lenbuffer))
+        print("EpRewMean = %f" % np.mean(rewbuffer))
+        print("EpThisIter = %f" % len(meta['ep_lens']))
+        print("EpisodesSoFar = %f" % episodes_so_far)
+        print("TimestepsSoFar = %f" % timesteps_so_far)
+        print("TimeElapsed = %f" % (time.time() - tstart))
+
