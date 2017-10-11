@@ -9,10 +9,12 @@ import numpy as np
 import tensorflow as tf
 from collections import deque
 
+import json
+from hashlib import md5
+
 from baselines import logger
 import baselines.common.tf_util as U
 from baselines.common import Dataset, zipsame
-
 from baselines.common.mpi_adam import MpiAdam
 
 import torch
@@ -23,13 +25,16 @@ import torch
 def flatten_lists(listoflists):
     return [el for list_ in listoflists for el in list_]
 
+def do_hash(x):
+     return md5(str(x).encode()).hexdigest()
+
 # --
 # Segment generator
 
 def make_segment_generator(pi, env, horizon, stochastic, gamma, lam):
     t = 0
-    ac = torch.from_numpy(env.action_space.sample()) # not used, just so we have the datatype
     new = True # marks if we're on first timestep of an episode
+    ac = torch.from_numpy(env.action_space.sample()) # not used, just so we have the datatype
     ob = torch.from_numpy(env.reset())
     
     cur_ep_ret = 0 # return in current episode
@@ -107,10 +112,17 @@ def make_segment_generator(pi, env, horizon, stochastic, gamma, lam):
 
 def learn(env, policy_func, *,
         timesteps_per_batch, # timesteps per actor per update
-        clip_param, entcoeff, # clipping parameter epsilon, entropy coeff
-        optim_epochs, optim_stepsize, optim_batchsize, # optimization hypers
-        gamma, lam, # advantage estimation
-        max_timesteps=0, max_episodes=0, max_iters=0, max_seconds=0, # time constraint
+        clip_param,
+        entcoeff, # clipping parameter epsilon, entropy coeff
+        optim_epochs,
+        optim_stepsize,
+        optim_batchsize, # optimization hypers
+        gamma,
+        lam, # advantage estimation
+        max_timesteps=0,
+        max_episodes=0,
+        max_iters=0,
+        max_seconds=0, # time constraint
         callback=None, # you can do anything in the callback, since it takes locals(), globals()
         adam_epsilon=1e-5,
         schedule='constant' # annealing for stepsize parameters (epsilon and adam)
@@ -123,7 +135,7 @@ def learn(env, policy_func, *,
     oldpi = policy_func("oldpi", env.observation_space, env.action_space) # Network for old policy
     
     atarg = tf.placeholder(dtype=tf.float32, shape=[None]) # Target advantage function (if applicable)
-    ret = tf.placeholder(dtype=tf.float32, shape=[None]) # Observed return
+    vtarg = tf.placeholder(dtype=tf.float32, shape=[None]) # Observed return (value target)
     
     lrmult = tf.placeholder(name='lrmult', dtype=tf.float32, shape=[]) # learning rate multiplier, updated with schedule
     clip_param = clip_param * lrmult # Annealed cliping parameter epsilon
@@ -153,7 +165,7 @@ def learn(env, policy_func, *,
     
     # Wrap everything above in functions
     var_list = pi.get_trainable_variables()
-    compute_grad = U.function([ob, ac, atarg, ret, lrmult], U.flatgrad(total_loss, var_list))
+    compute_grad = U.function([ob, ac, atarg, vtarg, lrmult], U.flatgrad(total_loss, var_list))
     
     # Optimizer
     opt = MpiAdam(var_list, epsilon=adam_epsilon)
@@ -212,6 +224,8 @@ def learn(env, policy_func, *,
         
         # make dataset
         dataset = Dataset(seg, shuffle=not pi.recurrent)
+        
+        print(do_hash((seg['acs'], seg['obs'])))
         
         # update running mean/std for policy, if applicable
         if hasattr(pi, "ob_rms"):

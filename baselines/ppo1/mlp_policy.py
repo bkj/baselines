@@ -69,9 +69,11 @@ class DiagGaussianPd(object):
         return self.mean + self.std * tf.random_normal(tf.shape(self.mean))
     
     def logp(self, x):
-        return - (0.5 * U.sum(tf.square((x - self.mean) / self.std), axis=-1) \
-               + 0.5 * np.log(2.0 * np.pi) * tf.to_float(tf.shape(x)[-1]) \
-               + U.sum(self.logstd, axis=-1))
+        return -1 * (
+            0.5 * U.sum(tf.square((x - self.mean) / self.std), axis=-1) + \
+            0.5 * np.log(2.0 * np.pi) * tf.to_float(tf.shape(x)[-1]) + \
+            U.sum(self.logstd, axis=-1)
+        )
 
 
 # --
