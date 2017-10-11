@@ -159,7 +159,7 @@ def learn(env, policy_func, *,
     pol_entpen = (-entcoeff) * U.mean(pi.pd.entropy())
     
     # value function loss
-    vf_loss = U.mean(tf.square(pi.vpred - ret))
+    vf_loss = U.mean(tf.square(pi.vpred - vtarg))
     
     total_loss = pol_surr + pol_entpen + vf_loss
     

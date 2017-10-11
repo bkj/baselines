@@ -11,13 +11,14 @@ import argparse
 
 from baselines import bench, logger
 from baselines.common import set_global_seeds, tf_util as U
-import mlp_policy, pposgd_simple
+import mlp_policy
+import pposgd_simple
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--env', default='Hopper-v1')
-    parser.add_argument('--seed', type=int, default=0)
-    parser.add_argument('--num-timesteps', type=int, default=int(1e6))
+    parser.add_argument('--env', default='Reacher-v1')
+    parser.add_argument('--seed', type=int, default=123)
+    parser.add_argument('--num-timesteps', type=int, default=25000)
     return parser.parse_args()
 
 if __name__ == '__main__':
